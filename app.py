@@ -78,27 +78,110 @@ def under_hourly_cap() -> bool:
         return True
 
 
+PAGE_STYLE = (
+    "font-family: -apple-system, Segoe UI, Roboto, sans-serif; max-width: 720px; "
+    "margin: 40px auto; padding: 0 20px; line-height: 1.65; color: #222;"
+)
+
+PRIVACY_HTML = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Privacy Policy - Yinwell</title>
+</head>
+<body style="{PAGE_STYLE}">
+<h1>Privacy Policy</h1>
+<p><em>Last updated: September 21, 2026</em></p>
+
+<p>This Privacy Policy explains how the Yinwell messaging assistant
+("the app", "we", "us") handles information. The app automates replies to
+comments and direct messages on the Instagram account
+<strong>@yinwellhealth</strong> and the Facebook Page
+<strong>Wellness for Midlife Women</strong>.</p>
+
+<h2>1. Information we receive</h2>
+<p>When you comment on one of our posts or interact with our direct
+messages, Instagram and Facebook send us:</p>
+<ul>
+<li>the text of your comment or message;</li>
+<li>your public username or name and your account ID on that platform;</li>
+<li>the identifiers of the post and comment involved.</li>
+</ul>
+<p>We do not receive your password, your email address, your phone number,
+your payment details, or your private information beyond the items above.</p>
+
+<h2>2. How we use it</h2>
+<p>We use this information only to reply automatically to your comment and
+to send you the link to our free test by direct message. We do not use it
+for advertising profiles, and we do not make automated decisions about you.</p>
+
+<h2>3. Sharing</h2>
+<p>We do not sell, rent, or share your information with third parties. It is
+processed only through Meta's platform (Instagram and Facebook) and through
+the hosting provider that runs the app.</p>
+
+<h2>4. Retention</h2>
+<p>The app does not keep a database of people or messages. Comment IDs are
+kept in memory for about one hour to avoid replying twice, and are then
+discarded. Our hosting provider keeps technical server logs for a limited
+period, which may include the username and comment text, and then deletes
+them automatically.</p>
+
+<h2>5. Your choices and data deletion</h2>
+<p>You can ask us to delete any information related to you at any time. See
+<a href="/data-deletion">how to request data deletion</a>. You can also stop
+receiving messages by simply not replying, or by removing the conversation
+in Instagram or Messenger.</p>
+
+<h2>6. Children</h2>
+<p>The app is not directed to children under 13, and we do not knowingly
+process their information.</p>
+
+<h2>7. Changes</h2>
+<p>We may update this policy. The date at the top shows the latest version.</p>
+
+<h2>8. Contact</h2>
+<p>Send us a direct message on Instagram at
+<strong>@yinwellhealth</strong>, or on the Facebook Page
+<strong>Wellness for Midlife Women</strong>.</p>
+</body>
+</html>"""
+
+DATA_DELETION_HTML = f"""<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Data Deletion - Yinwell</title>
+</head>
+<body style="{PAGE_STYLE}">
+<h1>Data Deletion Instructions</h1>
+<p>The Yinwell messaging assistant does not keep a database of user
+profiles. To request deletion of any information related to you:</p>
+<ol>
+<li>Send a direct message to <strong>@yinwellhealth</strong> on Instagram, or
+to the Facebook Page <strong>Wellness for Midlife Women</strong>, with the
+words "delete my data".</li>
+<li>Tell us the username or name you used when you commented.</li>
+<li>We will remove any information related to you, including entries in our
+server logs where possible, and confirm by message within 30 days.</li>
+</ol>
+<p>You can also remove the app's access at any time in your Instagram or
+Facebook settings, under "Apps and websites".</p>
+<p><a href="/privacy">Back to the Privacy Policy</a></p>
+</body>
+</html>"""
+
+
 @app.route("/privacy", methods=["GET"])
 def privacy():
-    return """
-    <html>
-    <head><title>Privacy Policy</title></head>
-    <body style="font-family: sans-serif; max-width: 700px; margin: 40px auto; line-height: 1.6;">
-        <h1>Privacy Policy</h1>
-        <p>This application automates replies to comments and direct messages
-        on the Instagram account @yinwellhealth and the Facebook Page
-        "Wellness for Midlife Women".</p>
-        <p>The data accessed (public comments, the commenter's public username
-        or name, and direct messages) is used only to reply automatically to
-        people who interact with our posts, sending them the information and
-        links related to the content.</p>
-        <p>No data is sold, shared with third parties, or used for any other
-        purpose. The application does not permanently store this data.</p>
-        <p>To ask questions or request data removal, contact us through the
-        Instagram account @yinwellhealth.</p>
-    </body>
-    </html>
-    """, 200
+    return PRIVACY_HTML, 200
+
+
+@app.route("/data-deletion", methods=["GET"])
+def data_deletion():
+    return DATA_DELETION_HTML, 200
 
 
 @app.route("/webhook", methods=["GET"])
