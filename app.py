@@ -27,29 +27,18 @@ FB_GRAPH = "https://graph.facebook.com/v21.0"
 
 TRIGGER = re.compile(r"\btest\b", re.IGNORECASE)
 
-CLICK_BUTTON_TITLE = "Send it to me ✅"
+CLICK_BUTTON_TITLE = "Send it to me"
 CLICK_PAYLOAD = "SEND_LINK"
+LINK_BUTTON_TITLE = "Take the free test"
 
-DM_TEXTS = [
-    "Hi! Thanks for commenting 🌿\n\n"
-    "I put together a quick free quiz to find out which acupressure points "
-    "fit your symptoms best. It takes about a minute.\n\n"
-    "Tap the button below and I'll send it over:",
-    "Hey, so glad you're here 💛\n\n"
-    "I made a short free quiz that matches your symptoms to the acupressure "
-    "points that can help most.\n\n"
-    "Tap below and I'll send you the link:",
-    "Hello! Thank you for your comment ✨\n\n"
-    "Your free acupressure quiz is ready. It takes under a minute and shows "
-    "you where to start.\n\n"
-    "Tap the button and it's yours:",
-]
-
-FINAL_DM_TEXTS = [
-    "Here you go! Your free quiz 👇\n{link}",
-    "Perfect, here is your quiz 👇\n{link}",
-    "All set! Take your free quiz here 👇\n{link}",
-]
+DM_TEXT = (
+    "Thank you for your comment!\n\n"
+    "The link to your free test is in the button below."
+)
+FALLBACK_TEXT = (
+    "Thank you for your comment!\n\n"
+    "Tap the button below and I'll send you the link to your free test."
+)
 
 PUBLIC_REPLIES = [
     "Just sent it to your DMs! 📩",
@@ -172,7 +161,7 @@ def process_instagram_event(data: dict):
 
             log.info("IG comment from %s (%s)", username, comment_id)
             ig_public_reply(comment_id, random.choice(PUBLIC_REPLIES))
-            ig_private_reply_with_button(comment_id, random.choice(DM_TEXTS))
+            ig_private_reply(comment_id)
 
 
 def process_facebook_event(data: dict):
@@ -206,7 +195,7 @@ def process_facebook_event(data: dict):
 
             log.info("FB comment from %s (%s)", from_user.get("name"), comment_id)
             fb_public_reply(comment_id, random.choice(PUBLIC_REPLIES))
-            fb_private_reply(comment_id, random.choice(DM_TEXTS))
+            fb_private_reply(comment_id)
 
 
 def ig_public_reply(comment_id: str, message: str):
@@ -225,12 +214,31 @@ def _ig_post(body: dict) -> requests.Response:
     )
 
 
-def ig_private_reply_with_button(comment_id: str, text: str):
+def link_button_template(text: str) -> dict:
+    return {
+        "attachment": {
+            "type": "template",
+            "payload": {
+                "template_type": "button",
+                "text": text,
+                "buttons": [{"type": "web_url", "url": DM_LINK, "title": LINK_BUTTON_TITLE}],
+            },
+        }
+    }
+
+
+def ig_private_reply(comment_id: str):
+    resp = _ig_post({"recipient": {"comment_id": comment_id}, "message": link_button_template(DM_TEXT)})
+    if resp.ok:
+        log.info("IG private reply sent (%s, link button)", comment_id)
+        return
+    log.error("IG private reply with link button refused (%s): %s", comment_id, resp.text)
+
     resp = _ig_post(
         {
             "recipient": {"comment_id": comment_id},
             "message": {
-                "text": text,
+                "text": FALLBACK_TEXT,
                 "quick_replies": [
                     {"content_type": "text", "title": CLICK_BUTTON_TITLE, "payload": CLICK_PAYLOAD}
                 ],
@@ -238,31 +246,9 @@ def ig_private_reply_with_button(comment_id: str, text: str):
         }
     )
     if resp.ok:
-        log.info("IG private reply sent (%s, quick_reply)", comment_id)
-        return
-    log.error("IG private reply with quick_reply refused (%s): %s", comment_id, resp.text)
-
-    resp = _ig_post(
-        {
-            "recipient": {"comment_id": comment_id},
-            "message": {
-                "attachment": {
-                    "type": "template",
-                    "payload": {
-                        "template_type": "button",
-                        "text": text,
-                        "buttons": [
-                            {"type": "postback", "title": CLICK_BUTTON_TITLE, "payload": CLICK_PAYLOAD}
-                        ],
-                    },
-                }
-            },
-        }
-    )
-    if resp.ok:
-        log.info("IG private reply sent (%s, postback)", comment_id)
+        log.info("IG private reply sent (%s, two-step fallback)", comment_id)
     else:
-        log.error("IG private reply failed (%s): %s", comment_id, resp.text)
+        log.error("IG private reply fallback failed (%s): %s", comment_id, resp.text)
 
 
 def handle_messaging_event(entry: dict, event: dict):
@@ -281,8 +267,7 @@ def handle_messaging_event(entry: dict, event: dict):
     if already_processed(f"click:{mid}"):
         return
 
-    text = random.choice(FINAL_DM_TEXTS).format(link=DM_LINK)
-    resp = _ig_post({"recipient": {"id": sender_id}, "message": {"text": text}})
+    resp = _ig_post({"recipient": {"id": sender_id}, "message": link_button_template(DM_TEXT)})
     if resp.ok:
         log.info("IG final DM sent (%s)", sender_id)
     else:
@@ -299,25 +284,11 @@ def fb_public_reply(comment_id: str, message: str):
         log.error("FB public reply failed (%s): %s", comment_id, resp.text)
 
 
-def fb_private_reply(comment_id: str, text: str):
+def fb_private_reply(comment_id: str):
     resp = requests.post(
         f"{FB_GRAPH}/me/messages",
         params={"access_token": FB_PAGE_TOKEN},
-        json={
-            "recipient": {"comment_id": comment_id},
-            "message": {
-                "attachment": {
-                    "type": "template",
-                    "payload": {
-                        "template_type": "button",
-                        "text": text,
-                        "buttons": [
-                            {"type": "web_url", "url": DM_LINK, "title": "Take the free quiz"}
-                        ],
-                    },
-                }
-            },
-        },
+        json={"recipient": {"comment_id": comment_id}, "message": link_button_template(DM_TEXT)},
     )
     if resp.ok:
         log.info("FB private reply sent (%s)", comment_id)
