@@ -25,7 +25,15 @@ MAX_REPLIES_PER_HOUR = int(os.environ.get("MAX_REPLIES_PER_HOUR", "40"))
 IG_GRAPH = "https://graph.instagram.com/v21.0"
 FB_GRAPH = "https://graph.facebook.com/v21.0"
 
-TRIGGER = re.compile(r"\btest\b", re.IGNORECASE)
+TRIGGER_WORD = os.environ.get("TRIGGER_WORD", "").strip()
+TRIGGER = (
+    re.compile(rf"\b{re.escape(TRIGGER_WORD)}\b", re.IGNORECASE) if TRIGGER_WORD else None
+)
+
+
+def matches_trigger(text: str) -> bool:
+    return TRIGGER is None or bool(TRIGGER.search(text))
+
 
 CLICK_BUTTON_TITLE = "Send it to me"
 CLICK_PAYLOAD = "SEND_LINK"
@@ -234,7 +242,7 @@ def process_instagram_event(data: dict):
                 or username == IG_USERNAME
             ):
                 continue
-            if not TRIGGER.search(text):
+            if not matches_trigger(text):
                 continue
             if already_processed(comment_id):
                 continue
@@ -268,7 +276,7 @@ def process_facebook_event(data: dict):
                 continue
             if value.get("parent_id") and value.get("parent_id") != value.get("post_id"):
                 continue
-            if not TRIGGER.search(text):
+            if not matches_trigger(text):
                 continue
             if already_processed(comment_id):
                 continue
