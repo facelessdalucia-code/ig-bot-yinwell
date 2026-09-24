@@ -1,12 +1,19 @@
 import os
 import re
+import json
+import html
 import logging
 import random
 import threading
 import time
 
 import requests
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, Response
+
+try:
+    import psycopg
+except ImportError:
+    psycopg = None
 
 logging.basicConfig(level=logging.INFO)
 log = logging.getLogger("yinwell-bot")
@@ -20,6 +27,10 @@ IG_USERNAME = os.environ.get("IG_USERNAME", "yinwellhealth")
 FB_PAGE_TOKEN = os.environ.get("FB_PAGE_TOKEN")
 FB_PAGE_ID = os.environ.get("FB_PAGE_ID")
 DM_LINK = os.environ["DM_LINK"]
+DM_LINK_A = os.environ.get("DM_LINK_A") or DM_LINK.rstrip("/") + "/a/"
+DM_LINK_B = os.environ.get("DM_LINK_B") or DM_LINK.rstrip("/") + "/b/"
+DATABASE_URL = os.environ.get("DATABASE_URL")
+STATS_KEY = os.environ.get("STATS_KEY", "")
 MAX_REPLIES_PER_HOUR = int(os.environ.get("MAX_REPLIES_PER_HOUR", "40"))
 
 IG_GRAPH = "https://graph.instagram.com/v21.0"
@@ -43,6 +54,10 @@ DM_TEXT = (
     "Thank you for your comment!\n\n"
     "The link to your free test is in the button below."
 )
+DM_TEXT_LINK = (
+    "Thank you for your comment!\n\n"
+    "Here is the link to your free test:\n{link}"
+)
 FALLBACK_TEXT = (
     "Thank you for your comment!\n\n"
     "Tap the button below and I'll send you the link to your free test."
@@ -61,6 +76,50 @@ _DEDUPE_TTL = 3600
 
 _sent_times = []
 _sent_lock = threading.Lock()
+
+
+TRACK_EVENTS = {"landed", "answered", "cta"}
+
+
+def _db():
+    return psycopg.connect(DATABASE_URL, connect_timeout=5, autocommit=True)
+
+
+def init_db():
+    if not (DATABASE_URL and psycopg):
+        log.warning("DATABASE_URL not set, A/B stats disabled")
+        return
+    try:
+        with _db() as conn:
+            conn.execute(
+                """CREATE TABLE IF NOT EXISTS ab_events (
+                    id BIGSERIAL PRIMARY KEY,
+                    ts TIMESTAMPTZ NOT NULL DEFAULT now(),
+                    variant TEXT NOT NULL,
+                    evt TEXT NOT NULL,
+                    sid TEXT NOT NULL,
+                    platform TEXT
+                )"""
+            )
+    except Exception:
+        log.exception("init_db failed")
+
+
+def record(variant: str, evt: str, sid: str, platform: str = None):
+    if not (DATABASE_URL and psycopg):
+        return
+    try:
+        with _db() as conn:
+            conn.execute(
+                "INSERT INTO ab_events (variant, evt, sid, platform) VALUES (%s, %s, %s, %s)",
+                (variant, evt, sid[:64], platform),
+            )
+    except Exception:
+        log.exception("record failed (%s %s)", variant, evt)
+
+
+def pick_variant() -> str:
+    return random.choice(("a", "b"))
 
 
 def already_processed(key: str) -> bool:
@@ -192,6 +251,92 @@ def data_deletion():
     return DATA_DELETION_HTML, 200
 
 
+@app.route("/t", methods=["POST", "OPTIONS"])
+def track():
+    resp = Response(status=204)
+    resp.headers["Access-Control-Allow-Origin"] = "*"
+    if request.method == "OPTIONS":
+        resp.headers["Access-Control-Allow-Methods"] = "POST"
+        resp.headers["Access-Control-Allow-Headers"] = "Content-Type"
+        return resp
+    try:
+        body = json.loads(request.get_data(as_text=True) or "{}")
+    except ValueError:
+        return resp
+    if not isinstance(body, dict):
+        return resp
+    v, e, sid = body.get("v"), body.get("e"), str(body.get("s") or "")
+    if v in ("a", "b") and e in TRACK_EVENTS and 0 < len(sid) <= 64:
+        record(v, e, sid)
+    return resp
+
+
+STATS_SQL = """
+SELECT variant,
+  COUNT(*) FILTER (WHERE evt = 'dm_sent') AS dms,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'landed') AS landed,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'answered') AS answered,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'cta') AS cta
+FROM ab_events GROUP BY variant
+"""
+
+
+def _pct(n, d):
+    return f"{(100.0 * n / d):.1f}%" if d else "–"
+
+
+STATS_PAGE = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta http-equiv="refresh" content="60"><title>Teste A/B — Yinwell</title>
+<style>
+body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f6f5f2;color:#1d1d1f;margin:0;padding:24px 16px}
+main{max-width:860px;margin:0 auto}
+.wrap{overflow-x:auto;background:#fff;border:1px solid #e3e1dc;border-radius:12px}
+table{border-collapse:collapse;width:100%;min-width:620px}
+th,td{padding:12px 14px;border-bottom:1px solid #eee;text-align:right;font-variant-numeric:tabular-nums}
+thead th{text-align:left;font-size:12px;color:#666;font-weight:600}
+tbody th{text-align:left;font-weight:600}
+p.note{color:#666;font-size:13px;line-height:1.5}
+</style></head><body><main>
+<h1>Teste A/B — bot Yinwell</h1>__ERR__
+<div class="wrap"><table><thead><tr><th>Versão</th><th>DMs enviadas</th><th>Entraram na página</th>
+<th>% que entrou</th><th>Responderam o quiz</th><th>Clicaram em comprar</th><th>% compra / entrada</th></tr></thead>
+<tbody>__ROWS__</tbody></table></div>
+<p class="note">Cada comentário sorteia A ou B (50/50). "Entraram", "responderam" e "clicaram" contam pessoas
+diferentes (o mesmo navegador conta uma vez). A comparação mais justa é a coluna "% que entrou".
+Com poucas dezenas de DMs a diferença ainda pode ser sorte: espere umas 100 DMs em cada versão antes de decidir.
+A página atualiza sozinha a cada minuto.</p>
+</main></body></html>"""
+
+
+@app.route("/stats", methods=["GET"])
+def stats():
+    if not STATS_KEY or request.args.get("key") != STATS_KEY:
+        return "forbidden", 403
+    rows = {"a": (0, 0, 0, 0), "b": (0, 0, 0, 0)}
+    err = ""
+    if DATABASE_URL and psycopg:
+        try:
+            with _db() as conn:
+                for v, *nums in conn.execute(STATS_SQL).fetchall():
+                    if v in rows:
+                        rows[v] = tuple(nums)
+        except Exception as exc:
+            err = "<p style='color:#b00'>Erro ao ler o banco: " + html.escape(str(exc)) + "</p>"
+    else:
+        err = "<p style='color:#b00'>Banco não configurado.</p>"
+    names = {"a": "A — DM com botão", "b": "B — link no texto"}
+    trs = ""
+    for v in ("a", "b"):
+        dms, landed, answered, cta = rows[v]
+        trs += (
+            f"<tr><th>{names[v]}</th><td>{dms}</td><td>{landed}</td>"
+            f"<td>{_pct(landed, dms)}</td><td>{answered}</td><td>{cta}</td>"
+            f"<td>{_pct(cta, landed)}</td></tr>"
+        )
+    return STATS_PAGE.replace("__ERR__", err).replace("__ROWS__", trs), 200
+
+
 @app.route("/webhook", methods=["GET"])
 def verify():
     if (
@@ -252,7 +397,9 @@ def process_instagram_event(data: dict):
 
             log.info("IG comment from %s (%s)", username, comment_id)
             ig_public_reply(comment_id, random.choice(PUBLIC_REPLIES))
-            ig_private_reply(comment_id)
+            variant = pick_variant()
+            if ig_private_reply(comment_id, variant):
+                record(variant, "dm_sent", comment_id, "instagram")
 
 
 def process_facebook_event(data: dict):
@@ -286,7 +433,9 @@ def process_facebook_event(data: dict):
 
             log.info("FB comment from %s (%s)", from_user.get("name"), comment_id)
             fb_public_reply(comment_id, random.choice(PUBLIC_REPLIES))
-            fb_private_reply(comment_id)
+            variant = pick_variant()
+            if fb_private_reply(comment_id, variant):
+                record(variant, "dm_sent", comment_id, "facebook")
 
 
 def ig_public_reply(comment_id: str, message: str):
@@ -305,24 +454,33 @@ def _ig_post(body: dict) -> requests.Response:
     )
 
 
-def link_button_template(text: str) -> dict:
+def link_button_template(text: str, link: str = None) -> dict:
     return {
         "attachment": {
             "type": "template",
             "payload": {
                 "template_type": "button",
                 "text": text,
-                "buttons": [{"type": "web_url", "url": DM_LINK, "title": LINK_BUTTON_TITLE}],
+                "buttons": [{"type": "web_url", "url": link or DM_LINK_A, "title": LINK_BUTTON_TITLE}],
             },
         }
     }
 
 
-def ig_private_reply(comment_id: str):
-    resp = _ig_post({"recipient": {"comment_id": comment_id}, "message": link_button_template(DM_TEXT)})
+def ig_private_reply(comment_id: str, variant: str) -> bool:
+    if variant == "b":
+        text = DM_TEXT_LINK.format(link=DM_LINK_B)
+        resp = _ig_post({"recipient": {"comment_id": comment_id}, "message": {"text": text}})
+        if resp.ok:
+            log.info("IG private reply sent (%s, variant b, link in text)", comment_id)
+            return True
+        log.error("IG private reply variant b failed (%s): %s", comment_id, resp.text)
+        return False
+
+    resp = _ig_post({"recipient": {"comment_id": comment_id}, "message": link_button_template(DM_TEXT, DM_LINK_A)})
     if resp.ok:
-        log.info("IG private reply sent (%s, link button)", comment_id)
-        return
+        log.info("IG private reply sent (%s, variant a, link button)", comment_id)
+        return True
     log.error("IG private reply with link button refused (%s): %s", comment_id, resp.text)
 
     resp = _ig_post(
@@ -337,9 +495,10 @@ def ig_private_reply(comment_id: str):
         }
     )
     if resp.ok:
-        log.info("IG private reply sent (%s, two-step fallback)", comment_id)
-    else:
-        log.error("IG private reply fallback failed (%s): %s", comment_id, resp.text)
+        log.info("IG private reply sent (%s, variant a, two-step fallback)", comment_id)
+        return True
+    log.error("IG private reply fallback failed (%s): %s", comment_id, resp.text)
+    return False
 
 
 def handle_messaging_event(entry: dict, event: dict):
@@ -375,17 +534,24 @@ def fb_public_reply(comment_id: str, message: str):
         log.error("FB public reply failed (%s): %s", comment_id, resp.text)
 
 
-def fb_private_reply(comment_id: str):
+def fb_private_reply(comment_id: str, variant: str) -> bool:
+    if variant == "b":
+        message = {"text": DM_TEXT_LINK.format(link=DM_LINK_B)}
+    else:
+        message = link_button_template(DM_TEXT, DM_LINK_A)
     resp = requests.post(
         f"{FB_GRAPH}/me/messages",
         params={"access_token": FB_PAGE_TOKEN},
-        json={"recipient": {"comment_id": comment_id}, "message": link_button_template(DM_TEXT)},
+        json={"recipient": {"comment_id": comment_id}, "message": message},
     )
     if resp.ok:
-        log.info("FB private reply sent (%s)", comment_id)
-    else:
-        log.error("FB private reply failed (%s): %s", comment_id, resp.text)
+        log.info("FB private reply sent (%s, variant %s)", comment_id, variant)
+        return True
+    log.error("FB private reply failed (%s): %s", comment_id, resp.text)
+    return False
 
+
+init_db()
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)))
