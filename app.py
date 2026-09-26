@@ -58,6 +58,39 @@ DM_TEXT_LINK = (
     "Thank you for your comment!\n\n"
     "Here is the link to your free test:\n{link}"
 )
+COPIES = {
+    "m1": (
+        "Thank you for commenting 🌿\n\n"
+        "Here's one to try tonight: press the soft hollow at your temples (the Taiyang point) "
+        "with gentle circles for 60 seconds before bed. It's traditionally used to calm a racing mind.\n\n"
+        "Want the exact point for YOUR symptoms? Take the 30-second quiz:\n{link}"
+    ),
+    "m2": (
+        "Thank you for your comment 💛\n\n"
+        "Waking up at 3am, hot flashes, brain fog… in Chinese medicine, each symptom has its own point, "
+        "and pressing the right one is what makes the difference.\n\n"
+        "Find the one that matches what you feel right now (free, 30 seconds):\n{link}"
+    ),
+    "m3": (
+        "Thank you for commenting ✨\n\n"
+        "Your body has a pressure point for what you're feeling right now, "
+        "and it's probably not where you'd expect.\n\n"
+        "Answer 1 quick question and I'll show you yours:\n{link}"
+    ),
+    "m4": (
+        "Thank you for your comment! 🌙\n\n"
+        "Here's your free acupressure test. It takes 30 seconds and shows the exact point "
+        "for your symptoms:\n{link}"
+    ),
+}
+COPY_NAMES = {"m1": "1 — Valor primeiro", "m2": "2 — Dor", "m3": "3 — Curiosidade", "m4": "4 — Direta"}
+
+
+def copy_text(variant: str) -> str:
+    link = f"{DM_LINK.rstrip('/')}/?m={variant[1:]}"
+    return COPIES[variant].format(link=link)
+
+
 FALLBACK_TEXT = (
     "Thank you for your comment!\n\n"
     "Tap the button below and I'll send you the link to your free test."
@@ -119,8 +152,7 @@ def record(variant: str, evt: str, sid: str, platform: str = None):
 
 
 def pick_variant() -> str:
-    # teste A/B encerrado: link no texto venceu
-    return "b"
+    return random.choice(list(COPIES))
 
 
 def already_processed(key: str) -> bool:
@@ -267,7 +299,7 @@ def track():
     if not isinstance(body, dict):
         return resp
     v, e, sid = body.get("v"), body.get("e"), str(body.get("s") or "")
-    if v in ("a", "b") and e in TRACK_EVENTS and 0 < len(sid) <= 64:
+    if (v in COPIES or v in ("a", "b")) and e in TRACK_EVENTS and 0 < len(sid) <= 64:
         record(v, e, sid)
     return resp
 
@@ -288,7 +320,7 @@ def _pct(n, d):
 
 STATS_PAGE = """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<meta http-equiv="refresh" content="60"><title>Teste A/B — Yinwell</title>
+<meta http-equiv="refresh" content="60"><title>Teste de copys — Yinwell</title>
 <style>
 body{font-family:-apple-system,Segoe UI,Roboto,sans-serif;background:#f6f5f2;color:#1d1d1f;margin:0;padding:24px 16px}
 main{max-width:860px;margin:0 auto}
@@ -299,13 +331,13 @@ thead th{text-align:left;font-size:12px;color:#666;font-weight:600}
 tbody th{text-align:left;font-weight:600}
 p.note{color:#666;font-size:13px;line-height:1.5}
 </style></head><body><main>
-<h1>Teste A/B — bot Yinwell</h1>__ERR__
+<h1>Teste de copys da DM — bot Yinwell</h1>__ERR__
 <div class="wrap"><table><thead><tr><th>Versão</th><th>DMs enviadas</th><th>Entraram na página</th>
 <th>% que entrou</th><th>Responderam o quiz</th><th>Clicaram em comprar</th><th>% compra / entrada</th></tr></thead>
 <tbody>__ROWS__</tbody></table></div>
-<p class="note">Cada comentário sorteia A ou B (50/50). "Entraram", "responderam" e "clicaram" contam pessoas
+<p class="note">Cada comentário sorteia uma das 4 mensagens (25% cada). "Entraram", "responderam" e "clicaram" contam pessoas
 diferentes (o mesmo navegador conta uma vez). A comparação mais justa é a coluna "% que entrou".
-Com poucas dezenas de DMs a diferença ainda pode ser sorte: espere umas 100 DMs em cada versão antes de decidir.
+Com poucas dezenas de DMs a diferença ainda pode ser sorte: espere umas 100 DMs em cada mensagem antes de decidir.
 A página atualiza sozinha a cada minuto.</p>
 </main></body></html>"""
 
@@ -314,7 +346,7 @@ A página atualiza sozinha a cada minuto.</p>
 def stats():
     if not STATS_KEY or request.args.get("key") != STATS_KEY:
         return "forbidden", 403
-    rows = {"a": (0, 0, 0, 0), "b": (0, 0, 0, 0)}
+    rows = {v: (0, 0, 0, 0) for v in COPIES}
     err = ""
     if DATABASE_URL and psycopg:
         try:
@@ -326,9 +358,9 @@ def stats():
             err = "<p style='color:#b00'>Erro ao ler o banco: " + html.escape(str(exc)) + "</p>"
     else:
         err = "<p style='color:#b00'>Banco não configurado.</p>"
-    names = {"a": "A — DM com botão", "b": "B — link no texto"}
+    names = COPY_NAMES
     trs = ""
-    for v in ("a", "b"):
+    for v in COPIES:
         dms, landed, answered, cta = rows[v]
         trs += (
             f"<tr><th>{names[v]}</th><td>{dms}</td><td>{landed}</td>"
@@ -469,6 +501,14 @@ def link_button_template(text: str, link: str = None) -> dict:
 
 
 def ig_private_reply(comment_id: str, variant: str) -> bool:
+    if variant in COPIES:
+        resp = _ig_post({"recipient": {"comment_id": comment_id}, "message": {"text": copy_text(variant)}})
+        if resp.ok:
+            log.info("IG private reply sent (%s, copy %s)", comment_id, variant)
+            return True
+        log.error("IG private reply copy %s failed (%s): %s", variant, comment_id, resp.text)
+        return False
+
     if variant == "b":
         text = DM_TEXT_LINK.format(link=DM_LINK_B)
         resp = _ig_post({"recipient": {"comment_id": comment_id}, "message": {"text": text}})
@@ -536,7 +576,9 @@ def fb_public_reply(comment_id: str, message: str):
 
 
 def fb_private_reply(comment_id: str, variant: str) -> bool:
-    if variant == "b":
+    if variant in COPIES:
+        message = {"text": copy_text(variant)}
+    elif variant == "b":
         message = {"text": DM_TEXT_LINK.format(link=DM_LINK_B)}
     else:
         message = link_button_template(DM_TEXT, DM_LINK_A)
