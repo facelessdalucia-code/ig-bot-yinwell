@@ -28,7 +28,7 @@ FB_PAGE_TOKEN = os.environ.get("FB_PAGE_TOKEN")
 FB_PAGE_ID = os.environ.get("FB_PAGE_ID")
 DM_LINK = os.environ["DM_LINK"]
 DM_LINK_A = os.environ.get("DM_LINK_A") or DM_LINK.rstrip("/") + "/a/"
-DM_LINK_B = os.environ.get("DM_LINK_B") or DM_LINK.rstrip("/") + "/b/"
+DM_LINK_B = os.environ.get("DM_LINK_B") or DM_LINK
 DATABASE_URL = os.environ.get("DATABASE_URL")
 STATS_KEY = os.environ.get("STATS_KEY", "")
 MAX_REPLIES_PER_HOUR = int(os.environ.get("MAX_REPLIES_PER_HOUR", "40"))
@@ -119,7 +119,8 @@ def record(variant: str, evt: str, sid: str, platform: str = None):
 
 
 def pick_variant() -> str:
-    return random.choice(("a", "b"))
+    # teste A/B encerrado: link no texto venceu
+    return "b"
 
 
 def already_processed(key: str) -> bool:
