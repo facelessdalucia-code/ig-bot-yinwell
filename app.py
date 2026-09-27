@@ -151,8 +151,11 @@ def record(variant: str, evt: str, sid: str, platform: str = None):
         log.exception("record failed (%s %s)", variant, evt)
 
 
+COPY_WEIGHTS = {"m1": 3, "m2": 1, "m3": 1, "m4": 1}
+
+
 def pick_variant() -> str:
-    return random.choice(list(COPIES))
+    return random.choices(list(COPY_WEIGHTS), weights=list(COPY_WEIGHTS.values()))[0]
 
 
 def already_processed(key: str) -> bool:
@@ -335,7 +338,7 @@ p.note{color:#666;font-size:13px;line-height:1.5}
 <div class="wrap"><table><thead><tr><th>Versão</th><th>DMs enviadas</th><th>Entraram na página</th>
 <th>% que entrou</th><th>Responderam o quiz</th><th>Clicaram em comprar</th><th>% compra / entrada</th></tr></thead>
 <tbody>__ROWS__</tbody></table></div>
-<p class="note">Cada comentário sorteia uma das 4 mensagens (25% cada). "Entraram", "responderam" e "clicaram" contam pessoas
+<p class="note">A mensagem 1 recebe 50% dos comentários e as mensagens 2, 3 e 4 dividem o resto (~17% cada), desde 27/09; antes era 25% cada. Compare pela coluna de porcentagem, não pelo total. "Entraram", "responderam" e "clicaram" contam pessoas
 diferentes (o mesmo navegador conta uma vez). A comparação mais justa é a coluna "% que entrou".
 Com poucas dezenas de DMs a diferença ainda pode ser sorte: espere umas 100 DMs em cada mensagem antes de decidir.
 A página atualiza sozinha a cada minuto.</p>
