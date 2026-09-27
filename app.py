@@ -111,7 +111,8 @@ _sent_times = []
 _sent_lock = threading.Lock()
 
 
-TRACK_EVENTS = {"landed", "answered", "cta"}
+TRACK_EVENTS = {"landed", "started", "answered", "cta"}
+LAYOUTS = ("intro", "direct")
 
 
 def _db():
@@ -134,18 +135,19 @@ def init_db():
                     platform TEXT
                 )"""
             )
+            conn.execute("ALTER TABLE ab_events ADD COLUMN IF NOT EXISTS grp TEXT")
     except Exception:
         log.exception("init_db failed")
 
 
-def record(variant: str, evt: str, sid: str, platform: str = None):
+def record(variant: str, evt: str, sid: str, platform: str = None, grp: str = None):
     if not (DATABASE_URL and psycopg):
         return
     try:
         with _db() as conn:
             conn.execute(
-                "INSERT INTO ab_events (variant, evt, sid, platform) VALUES (%s, %s, %s, %s)",
-                (variant, evt, sid[:64], platform),
+                "INSERT INTO ab_events (variant, evt, sid, platform, grp) VALUES (%s, %s, %s, %s, %s)",
+                (variant, evt, sid[:64], platform, grp),
             )
     except Exception:
         log.exception("record failed (%s %s)", variant, evt)
@@ -302,8 +304,9 @@ def track():
     if not isinstance(body, dict):
         return resp
     v, e, sid = body.get("v"), body.get("e"), str(body.get("s") or "")
+    g = body.get("g") if body.get("g") in LAYOUTS else None
     if (v in COPIES or v in ("a", "b")) and e in TRACK_EVENTS and 0 < len(sid) <= 64:
-        record(v, e, sid)
+        record(v, e, sid, grp=g)
     return resp
 
 
@@ -315,6 +318,17 @@ SELECT variant,
   COUNT(DISTINCT sid) FILTER (WHERE evt = 'cta') AS cta
 FROM ab_events GROUP BY variant
 """
+
+
+LAYOUT_SQL = """
+SELECT grp,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'landed') AS landed,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'started') AS started,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'answered') AS answered,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'cta') AS cta
+FROM ab_events WHERE grp IS NOT NULL GROUP BY grp
+"""
+LAYOUT_NAMES = {"intro": "Com tela de abertura (como era)", "direct": "Direto na pergunta"}
 
 
 def _pct(n, d):
@@ -338,6 +352,13 @@ p.note{color:#666;font-size:13px;line-height:1.5}
 <div class="wrap"><table><thead><tr><th>Versão</th><th>DMs enviadas</th><th>Entraram na página</th>
 <th>% que entrou</th><th>Responderam o quiz</th><th>Clicaram em comprar</th><th>% compra / entrada</th></tr></thead>
 <tbody>__ROWS__</tbody></table></div>
+<h2 style="margin-top:36px">Teste da tela de abertura do quiz</h2>
+<div class="wrap"><table><thead><tr><th>Grupo</th><th>Entraram</th><th>Clicaram em "Start"</th>
+<th>Responderam o quiz</th><th>% que respondeu</th><th>Clicaram em comprar</th><th>% compra / entrada</th></tr></thead>
+<tbody>__LAYOUT__</tbody></table></div>
+<p class="note">Quem vem da DM é sorteado 50/50: metade vê a tela de abertura com o botão "Start the Quiz"
+(como antes) e metade cai direto na pergunta. A coluna que decide é "% que respondeu" (respondeu ÷ entrou).
+"Clicaram em Start" só existe no grupo com tela de abertura e mostra quantos passam dela.</p>
 <p class="note">A mensagem 1 recebe 50% dos comentários e as mensagens 2, 3 e 4 dividem o resto (~17% cada), desde 27/09; antes era 25% cada. Compare pela coluna de porcentagem, não pelo total. "Entraram", "responderam" e "clicaram" contam pessoas
 diferentes (o mesmo navegador conta uma vez). A comparação mais justa é a coluna "% que entrou".
 Com poucas dezenas de DMs a diferença ainda pode ser sorte: espere umas 100 DMs em cada mensagem antes de decidir.
@@ -350,6 +371,7 @@ def stats():
     if not STATS_KEY or request.args.get("key") != STATS_KEY:
         return "forbidden", 403
     rows = {v: (0, 0, 0, 0) for v in COPIES}
+    lrows = {g: (0, 0, 0, 0) for g in LAYOUTS}
     err = ""
     if DATABASE_URL and psycopg:
         try:
@@ -357,6 +379,9 @@ def stats():
                 for v, *nums in conn.execute(STATS_SQL).fetchall():
                     if v in rows:
                         rows[v] = tuple(nums)
+                for g, *nums in conn.execute(LAYOUT_SQL).fetchall():
+                    if g in lrows:
+                        lrows[g] = tuple(nums)
         except Exception as exc:
             err = "<p style='color:#b00'>Erro ao ler o banco: " + html.escape(str(exc)) + "</p>"
     else:
@@ -370,7 +395,16 @@ def stats():
             f"<td>{_pct(landed, dms)}</td><td>{answered}</td><td>{cta}</td>"
             f"<td>{_pct(cta, landed)}</td></tr>"
         )
-    return STATS_PAGE.replace("__ERR__", err).replace("__ROWS__", trs), 200
+    ltrs = ""
+    for g in LAYOUTS:
+        landed, started, answered, cta = lrows[g]
+        start_cell = str(started) if g == "intro" else "—"
+        ltrs += (
+            f"<tr><th>{LAYOUT_NAMES[g]}</th><td>{landed}</td><td>{start_cell}</td>"
+            f"<td>{answered}</td><td>{_pct(answered, landed)}</td><td>{cta}</td>"
+            f"<td>{_pct(cta, landed)}</td></tr>"
+        )
+    return STATS_PAGE.replace("__ERR__", err).replace("__ROWS__", trs).replace("__LAYOUT__", ltrs), 200
 
 
 @app.route("/webhook", methods=["GET"])
