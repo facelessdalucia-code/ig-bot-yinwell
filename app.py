@@ -366,6 +366,37 @@ A página atualiza sozinha a cada minuto.</p>
 </main></body></html>"""
 
 
+@app.route("/insights", methods=["GET"])
+def insights():
+    """Só leitura, pro CENTRAL V: perfil, alcance 7d e últimos posts com views/comentários."""
+    if not STATS_KEY or request.args.get("key") != STATS_KEY:
+        return "forbidden", 403
+    tok = IG_TOKEN
+    def g(path, **p):
+        p["access_token"] = tok
+        try:
+            return requests.get(f"https://graph.instagram.com/v21.0/{path}", params=p, timeout=20).json()
+        except Exception as e:
+            return {"error": {"message": str(e)}}
+    out = {"perfil": g("me", fields="id,username,followers_count,media_count")}
+    since = int(time.time()) - 7 * 86400
+    ins = g("me/insights", metric="reach,profile_views,accounts_engaged,follower_count", period="day", metric_type="total_value", since=since)
+    out["insights_7d"] = {m["name"]: (m.get("total_value") or {}).get("value") for m in ins.get("data", [])}
+    if "error" in ins:
+        out["insights_erro"] = ins["error"].get("message")
+    posts = []
+    for p in g("me/media", fields="id,caption,media_product_type,timestamp,like_count,comments_count,permalink,thumbnail_url,media_url", limit=15).get("data", []):
+        mi = g(f"{p['id']}/insights", metric="reach,views,saved,shares")
+        v = {m["name"]: (m.get("values") or [{}])[0].get("value") for m in mi.get("data", [])}
+        posts.append({"id": p["id"], "quando": p.get("timestamp"), "tipo": p.get("media_product_type"),
+                      "titulo": (p.get("caption") or "").split("\n")[0][:90], "link": p.get("permalink"),
+                      "thumb": p.get("thumbnail_url") or p.get("media_url"),
+                      "curtidas": p.get("like_count"), "comentarios": p.get("comments_count"),
+                      "views": v.get("views"), "alcance": v.get("reach"), "salvos": v.get("saved"), "compart": v.get("shares")})
+    out["posts"] = posts
+    return jsonify(out)
+
+
 @app.route("/stats", methods=["GET"])
 def stats():
     if not STATS_KEY or request.args.get("key") != STATS_KEY:
