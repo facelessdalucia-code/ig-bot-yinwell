@@ -86,9 +86,31 @@ COPIES = {
 COPY_NAMES = {"m1": "1 — Valor primeiro", "m2": "2 — Dor", "m3": "3 — Curiosidade", "m4": "4 — Direta"}
 
 
+COPY_BUTTON_TITLE = "Take the free quiz"
+
+
+def copy_link(variant: str) -> str:
+    return f"{DM_LINK.rstrip('/')}/?m={variant[1:]}"
+
+
 def copy_text(variant: str) -> str:
-    link = f"{DM_LINK.rstrip('/')}/?m={variant[1:]}"
-    return COPIES[variant].format(link=link)
+    return COPIES[variant].format(link=copy_link(variant))
+
+
+def copy_button(variant: str) -> dict:
+    # Botão de link: em "solicitação de mensagem" o Instagram não deixa link
+    # escrito no texto clicável, mas o botão funciona.
+    text = COPIES[variant].replace("\n{link}", "").strip()
+    return {
+        "attachment": {
+            "type": "template",
+            "payload": {
+                "template_type": "button",
+                "text": text,
+                "buttons": [{"type": "web_url", "url": copy_link(variant), "title": COPY_BUTTON_TITLE}],
+            },
+        }
+    }
 
 
 FALLBACK_TEXT = (
@@ -570,9 +592,14 @@ def link_button_template(text: str, link: str = None) -> dict:
 
 def ig_private_reply(comment_id: str, variant: str) -> bool:
     if variant in COPIES:
+        resp = _ig_post({"recipient": {"comment_id": comment_id}, "message": copy_button(variant)})
+        if resp.ok:
+            log.info("IG private reply sent (%s, copy %s, button)", comment_id, variant)
+            return True
+        log.error("IG private reply copy %s with button refused (%s): %s", variant, comment_id, resp.text)
         resp = _ig_post({"recipient": {"comment_id": comment_id}, "message": {"text": copy_text(variant)}})
         if resp.ok:
-            log.info("IG private reply sent (%s, copy %s)", comment_id, variant)
+            log.info("IG private reply sent (%s, copy %s, text fallback)", comment_id, variant)
             return True
         log.error("IG private reply copy %s failed (%s): %s", variant, comment_id, resp.text)
         return False
@@ -645,7 +672,7 @@ def fb_public_reply(comment_id: str, message: str):
 
 def fb_private_reply(comment_id: str, variant: str) -> bool:
     if variant in COPIES:
-        message = {"text": copy_text(variant)}
+        message = copy_button(variant)
     elif variant == "b":
         message = {"text": DM_TEXT_LINK.format(link=DM_LINK_B)}
     else:
