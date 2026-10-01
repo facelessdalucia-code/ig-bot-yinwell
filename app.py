@@ -419,6 +419,56 @@ def insights():
     return jsonify(out)
 
 
+@app.route("/insights_fb", methods=["GET"])
+def insights_fb():
+    """Só leitura, pro CENTRAL V: página do Facebook (seguidores, alcance 7d, posts/reels recentes, agendados)."""
+    if not STATS_KEY or request.args.get("key") != STATS_KEY:
+        return "forbidden", 403
+    tok = FB_PAGE_TOKEN
+    if not tok:
+        return jsonify({"erro": "sem token da página"})
+    def g(path, **p):
+        p["access_token"] = tok
+        try:
+            return requests.get(f"https://graph.facebook.com/v21.0/{path}", params=p, timeout=20).json()
+        except Exception as e:
+            return {"error": {"message": str(e)}}
+    out = {"perfil": g("me", fields="id,name,followers_count,fan_count")}
+    since = int(time.time()) - 7 * 86400
+    ins = {}
+    for m in ["page_impressions_unique", "page_post_engagements", "page_video_views", "page_daily_follows_unique"]:
+        r = g("me/insights", metric=m, period="day", since=since, until=int(time.time()))
+        if "error" in r:
+            ins[m] = {"erro": r["error"].get("message")}
+        else:
+            ins[m] = sum((v.get("value") or 0) for d in r.get("data", []) for v in d.get("values", []) if isinstance(v.get("value"), (int, float)))
+    out["insights_7d"] = ins
+    posts = []
+    r = g("me/posts", fields="id,message,created_time,permalink_url,comments.summary(true).limit(0),reactions.summary(true).limit(0),shares", limit=15)
+    if "error" in r:
+        out["posts_erro"] = r["error"].get("message")
+    for p in r.get("data", []):
+        posts.append({"id": p["id"], "quando": p.get("created_time"), "titulo": (p.get("message") or "").split("\n")[0][:90], "link": p.get("permalink_url"),
+                      "comentarios": ((p.get("comments") or {}).get("summary") or {}).get("total_count"),
+                      "curtidas": ((p.get("reactions") or {}).get("summary") or {}).get("total_count"), "compart": (p.get("shares") or {}).get("count")})
+    v = g("me/video_reels", fields="id,description,created_time,permalink_url,video_insights", limit=15)
+    reels = []
+    if "error" in v:
+        out["reels_erro"] = v["error"].get("message")
+    for x in v.get("data", []):
+        vi = {i.get("name"): (i.get("values") or [{}])[0].get("value") for i in (x.get("video_insights") or {}).get("data", [])}
+        reels.append({"id": x["id"], "quando": x.get("created_time"), "titulo": (x.get("description") or "").split("\n")[0][:90],
+                      "link": ("https://www.facebook.com" + x["permalink_url"]) if (x.get("permalink_url") or "").startswith("/") else x.get("permalink_url"),
+                      "views": vi.get("blue_reels_play_count") or vi.get("fb_reels_total_plays"), "alcance": vi.get("post_impressions_unique")})
+    out["posts"] = posts
+    out["reels"] = reels
+    s = g("me/scheduled_posts", fields="id,message,scheduled_publish_time,created_time", limit=50)
+    out["agendados"] = [{"id": x["id"], "quando": x.get("scheduled_publish_time"), "titulo": (x.get("message") or "").split("\n")[0][:90]} for x in s.get("data", [])]
+    if "error" in s:
+        out["agendados_erro"] = s["error"].get("message")
+    return jsonify(out)
+
+
 @app.route("/stats", methods=["GET"])
 def stats():
     if not STATS_KEY or request.args.get("key") != STATS_KEY:
