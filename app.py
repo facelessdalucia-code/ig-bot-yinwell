@@ -100,6 +100,7 @@ def copy_text(variant: str) -> str:
 
 FORMATS = {"m1": "Só link no texto", "m2": "Link no texto + botão"}
 FORMAT_TEST_START = os.environ.get("FORMAT_TEST_START", "2100-01-01T00:00:00Z")
+FORMAT_TEST_END = "2026-10-04T13:41:00Z"
 
 
 def format_message(variant: str):
@@ -201,7 +202,8 @@ def record(variant: str, evt: str, sid: str, platform: str = None, grp: str = No
 
 
 def pick_variant() -> str:
-    return random.choice(list(FORMATS))
+    # teste de formato encerrado em 04/10: só link no texto venceu
+    return "m1"
 
 
 def already_processed(key: str) -> bool:
@@ -370,7 +372,7 @@ SELECT variant,
   COUNT(DISTINCT sid) FILTER (WHERE evt = 'landed') AS landed,
   COUNT(DISTINCT sid) FILTER (WHERE evt = 'answered') AS answered,
   COUNT(DISTINCT sid) FILTER (WHERE evt = 'cta') AS cta
-FROM ab_events WHERE ts >= %(start)s AND variant IN ('m1', 'm2') GROUP BY variant
+FROM ab_events WHERE ts >= %(start)s AND ts < %(end)s AND variant IN ('m1', 'm2') GROUP BY variant
 """
 
 
@@ -403,11 +405,11 @@ tbody th{text-align:left;font-weight:600}
 p.note{color:#666;font-size:13px;line-height:1.5}
 </style></head><body><main>
 <h1>Bot Yinwell — testes</h1>__ERR__
-<h2>Teste do formato da DM (em andamento)</h2>
+<h2>Teste do formato da DM (encerrado em 04/10: venceu só link no texto)</h2>
 <div class="wrap"><table><thead><tr><th>Formato</th><th>DMs enviadas</th><th>Entraram na página</th>
 <th>% que entrou</th><th>Responderam o quiz</th><th>Clicaram em comprar</th><th>% compra / entrada</th></tr></thead>
 <tbody>__FORMAT__</tbody></table></div>
-<p class="note">Desde __START__. Cada comentário sorteia 50/50 entre mandar só o link escrito no texto ou o link no texto
+<p class="note">De __START__ até 04/10. Desde então todas as DMs vão só com o link no texto, com os 4 textos sorteados (25% cada). Cada comentário sorteia 50/50 entre mandar só o link escrito no texto ou o link no texto
 com um botão embaixo. O texto da mensagem é sorteado entre os 4 textos nos dois formatos, então ele pesa igual dos dois lados.
 A coluna que decide é "% que entrou". Espere umas 100 DMs em cada formato antes de decidir.</p>
 <h2 style="margin-top:36px">Teste dos 4 textos da DM (encerrado em 01/10)</h2>
@@ -523,7 +525,7 @@ def stats():
                 for v, *nums in conn.execute(STATS_SQL, {"start": FORMAT_TEST_START}).fetchall():
                     if v in rows:
                         rows[v] = tuple(nums)
-                for v, *nums in conn.execute(FORMAT_SQL, {"start": FORMAT_TEST_START}).fetchall():
+                for v, *nums in conn.execute(FORMAT_SQL, {"start": FORMAT_TEST_START, "end": FORMAT_TEST_END}).fetchall():
                     if v in frows:
                         frows[v] = tuple(nums)
                 for g, *nums in conn.execute(LAYOUT_SQL).fetchall():
