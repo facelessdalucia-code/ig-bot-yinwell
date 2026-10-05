@@ -103,7 +103,30 @@ FORMAT_TEST_START = os.environ.get("FORMAT_TEST_START", "2100-01-01T00:00:00Z")
 FORMAT_TEST_END = "2026-10-04T13:41:00Z"
 
 
+PAGE_URL = os.environ.get("PAGE_URL", "https://yinwell-method.pages.dev/")
+PAGE_TEST = {"tq": "DM → quiz → página", "tp": "DM → página direta"}
+PAGE_TEST_START = os.environ.get("PAGE_TEST_START", "2026-10-05T01:00:00Z")
+DM_PAGE = (
+    "Thank you for commenting 🌿\n\n"
+    "Here's one to try tonight: press the soft hollow at your temples (the Taiyang point) "
+    "with gentle circles for 60 seconds before bed. It's traditionally used to calm a racing mind.\n\n"
+    "I put every point I show — 26 of them, photographed on the body — in one simple guide:\n{link}"
+)
+
+
+def page_test_message(variant: str):
+    # teste quiz × página (desde 05/10): tq = um dos 4 textos com link do quiz; tp = ponto grátis + link da página
+    if variant == "tp":
+        text = DM_PAGE.format(link=f"{PAGE_URL.rstrip('/')}/?x=tp")
+    else:
+        m = random.choice(list(COPIES))
+        text = COPIES[m].format(link=f"{DM_LINK.rstrip('/')}/?m={m[1:]}&x=tq")
+    return {"text": text}, text
+
+
 def format_message(variant: str):
+    if variant in PAGE_TEST:
+        return page_test_message(variant)
     # O texto sorteia um dos 4 textos; o formato (com ou sem botão) é o que está em teste.
     link = f"{DM_LINK.rstrip('/')}/?m={variant[1:]}"
     text = COPIES[random.choice(list(COPIES))].format(link=link)
@@ -159,7 +182,7 @@ _sent_times = []
 _sent_lock = threading.Lock()
 
 
-TRACK_EVENTS = {"landed", "started", "answered", "cta"}
+TRACK_EVENTS = {"landed", "started", "answered", "cta", "ck", "paid"}
 LAYOUTS = ("intro", "direct")
 
 
@@ -202,8 +225,8 @@ def record(variant: str, evt: str, sid: str, platform: str = None, grp: str = No
 
 
 def pick_variant() -> str:
-    # teste de formato encerrado em 04/10: só link no texto venceu
-    return "m1"
+    # teste de formato encerrado em 04/10 (só link no texto venceu). Desde 05/10: quiz × página direta, 50/50
+    return random.choice(list(PAGE_TEST))
 
 
 def already_processed(key: str) -> bool:
@@ -351,7 +374,7 @@ def track():
         return resp
     v, e, sid = body.get("v"), body.get("e"), str(body.get("s") or "")
     g = body.get("g") if body.get("g") in LAYOUTS else None
-    if (v in COPIES or v in ("a", "b")) and e in TRACK_EVENTS and 0 < len(sid) <= 64:
+    if (v in COPIES or v in ("a", "b") or v in PAGE_TEST) and e in TRACK_EVENTS and 0 < len(sid) <= 64:
         record(v, e, sid, grp=g)
     return resp
 
@@ -386,6 +409,16 @@ FROM ab_events WHERE grp IS NOT NULL GROUP BY grp
 """
 LAYOUT_NAMES = {"intro": "Com tela de abertura (como era)", "direct": "Direto na pergunta"}
 
+PAGE_SQL = """
+SELECT variant,
+  COUNT(*) FILTER (WHERE evt = 'dm_sent') AS dms,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'landed') AS landed,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'answered') AS answered,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'ck') AS ck,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'paid') AS paid
+FROM ab_events WHERE ts >= %(start)s AND variant IN ('tq', 'tp') GROUP BY variant
+"""
+
 
 def _pct(n, d):
     return f"{(100.0 * n / d):.1f}%" if d else "–"
@@ -405,6 +438,13 @@ tbody th{text-align:left;font-weight:600}
 p.note{color:#666;font-size:13px;line-height:1.5}
 </style></head><body><main>
 <h1>Bot Yinwell — testes</h1>__ERR__
+<h2>Teste ativo: quiz × página de venda direta (desde 05/10)</h2>
+<div class="wrap"><table><thead><tr><th>Caminho</th><th>DMs enviadas</th><th>Entraram</th><th>% que entrou</th>
+<th>Responderam o quiz</th><th>Abriram o checkout</th><th>Compraram</th><th>% compra / DM</th></tr></thead>
+<tbody>__PAGE__</tbody></table></div>
+<p class="note">Cada comentário sorteia 50/50. <b>Quiz</b>: um dos 4 textos com o link do quiz; o botão do resultado leva pra página nova.
+<b>Página direta</b>: DM entrega um ponto grátis (Taiyang) + link da página nova. "Compraram" conta compras pagas no Stripe
+(o produto principal; bump/upsell aparecem no painel do Cloudflare). A coluna que decide é "% compra / DM".</p>
 <h2>Teste do formato da DM (encerrado em 04/10: venceu só link no texto)</h2>
 <div class="wrap"><table><thead><tr><th>Formato</th><th>DMs enviadas</th><th>Entraram na página</th>
 <th>% que entrou</th><th>Responderam o quiz</th><th>Clicaram em comprar</th><th>% compra / entrada</th></tr></thead>
@@ -518,6 +558,7 @@ def stats():
     rows = {v: (0, 0, 0, 0) for v in COPIES}
     frows = {v: (0, 0, 0, 0) for v in FORMATS}
     lrows = {g: (0, 0, 0, 0) for g in LAYOUTS}
+    prows = {v: (0, 0, 0, 0, 0) for v in PAGE_TEST}
     err = ""
     if DATABASE_URL and psycopg:
         try:
@@ -531,6 +572,9 @@ def stats():
                 for g, *nums in conn.execute(LAYOUT_SQL).fetchall():
                     if g in lrows:
                         lrows[g] = tuple(nums)
+                for v, *nums in conn.execute(PAGE_SQL, {"start": PAGE_TEST_START}).fetchall():
+                    if v in prows:
+                        prows[v] = tuple(nums)
         except Exception as exc:
             err = "<p style='color:#b00'>Erro ao ler o banco: " + html.escape(str(exc)) + "</p>"
     else:
@@ -561,8 +605,16 @@ def stats():
             f"<td>{_pct(landed, dms)}</td><td>{answered}</td><td>{cta}</td>"
             f"<td>{_pct(cta, landed)}</td></tr>"
         )
+    ptrs = ""
+    for v in PAGE_TEST:
+        dms, landed, answered, ck, paid = prows[v]
+        quiz_cell = str(answered) if v == "tq" else "—"
+        ptrs += (
+            f"<tr><th>{PAGE_TEST[v]}</th><td>{dms}</td><td>{landed}</td><td>{_pct(landed, dms)}</td>"
+            f"<td>{quiz_cell}</td><td>{ck}</td><td>{paid}</td><td>{_pct(paid, dms)}</td></tr>"
+        )
     start_label = html.escape(FORMAT_TEST_START.replace("T", " ")[:16]) + " UTC"
-    page = STATS_PAGE.replace("__ERR__", err).replace("__ROWS__", trs).replace("__LAYOUT__", ltrs)
+    page = STATS_PAGE.replace("__ERR__", err).replace("__ROWS__", trs).replace("__LAYOUT__", ltrs).replace("__PAGE__", ptrs)
     return page.replace("__FORMAT__", ftrs).replace("__START__", start_label), 200
 
 
@@ -697,14 +749,14 @@ def link_button_template(text: str, link: str = None) -> dict:
 
 
 def ig_private_reply(comment_id: str, variant: str) -> bool:
-    if variant in FORMATS:
+    if variant in FORMATS or variant in PAGE_TEST:
         msg, text = format_message(variant)
         resp = _ig_post({"recipient": {"comment_id": comment_id}, "message": msg})
         if resp.ok:
             log.info("IG private reply sent (%s, format %s)", comment_id, variant)
             return True
         log.error("IG private reply format %s refused (%s): %s", variant, comment_id, resp.text)
-        if variant == "m1":
+        if variant in ("m1", "tq", "tp"):
             return False
         resp = _ig_post({"recipient": {"comment_id": comment_id}, "message": {"text": text}})
         if resp.ok:
@@ -780,7 +832,7 @@ def fb_public_reply(comment_id: str, message: str):
 
 
 def fb_private_reply(comment_id: str, variant: str) -> bool:
-    if variant in FORMATS:
+    if variant in FORMATS or variant in PAGE_TEST:
         message = format_message(variant)[0]
     elif variant == "b":
         message = {"text": DM_TEXT_LINK.format(link=DM_LINK_B)}
