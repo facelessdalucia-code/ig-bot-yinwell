@@ -648,7 +648,11 @@ def process_event(data: dict):
 
 
 def process_instagram_event(data: dict):
+    import perfis
     for entry in data.get("entry", []):
+        if str(entry.get("id")) in perfis.PERFIS and str(entry.get("id")) != str(IG_USER_ID):
+            perfis.processar({"entry": [entry]})  # Wen, Mei, Hua... (mesmo app, outro perfil)
+            continue
         for event in entry.get("messaging", []):
             handle_messaging_event(entry, event)
         for change in entry.get("changes", []):
