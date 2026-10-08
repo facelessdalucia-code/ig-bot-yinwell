@@ -82,8 +82,16 @@ COPIES = {
         "Here's your free acupressure test. It takes 30 seconds and shows the exact point "
         "for your symptoms:\n{link}"
     ),
+    "m5": (
+        "Thank you for commenting ✨\n\n"
+        "Your body has a pressure point for what you're feeling right now, "
+        "and it's probably not where you'd expect.\n\n"
+        "Answer 1 quick question and I'll show you yours, with a free 60-second routine to try tonight:\n{link}"
+    ),
 }
-COPY_NAMES = {"m1": "1 — Valor primeiro", "m2": "2 — Dor", "m3": "3 — Curiosidade", "m4": "4 — Direta"}
+# teste de textos do caminho do quiz (desde 08/10): Dor e Direta saíram; Valor × Curiosidade × Junto
+QUIZ_COPIES = ("m1", "m3", "m5")
+COPY_NAMES = {"m1": "1 — Valor primeiro", "m2": "2 — Dor", "m3": "3 — Curiosidade", "m4": "4 — Direta", "m5": "5 — Curiosidade + ponto grátis no quiz"}
 
 
 COPY_BUTTON_TITLE = "Take the free quiz"
@@ -115,12 +123,16 @@ DM_PAGE = (
 )
 
 
+LAST_COPY = {"v": None}  # texto sorteado na última DM do quiz (gravado junto do dm_sent)
+
+
 def page_test_message(variant: str):
     # teste quiz × página (desde 05/10): tq = um dos 4 textos com link do quiz; tp = ponto grátis + link da página
     if variant == "tp":
         text = DM_PAGE.format(link=f"{PAGE_URL.rstrip('/')}/?x=tp")
     else:
-        m = random.choice(list(COPIES))
+        m = random.choice(QUIZ_COPIES)
+        LAST_COPY["v"] = m
         text = COPIES[m].format(link=f"{QUIZ_URL.rstrip('/')}/?m={m[1:]}&x=tq")
     return {"text": text}, text
 
@@ -185,6 +197,8 @@ _sent_lock = threading.Lock()
 
 TRACK_EVENTS = {"landed", "started", "answered", "cta", "ck", "paid"}
 LAYOUTS = ("intro", "direct")
+COPY_GRPS = ("c1", "c2", "c3", "c4", "c5")
+COPY_TEST_START = os.environ.get("COPY_TEST_START", "2026-10-08T21:15:00")
 
 
 def _db():
@@ -374,7 +388,7 @@ def track():
     if not isinstance(body, dict):
         return resp
     v, e, sid = body.get("v"), body.get("e"), str(body.get("s") or "")
-    g = body.get("g") if body.get("g") in LAYOUTS else None
+    g = body.get("g") if (body.get("g") in LAYOUTS or body.get("g") in COPY_GRPS) else None
     if (v in COPIES or v in ("a", "b") or v in PAGE_TEST) and e in TRACK_EVENTS and 0 < len(sid) <= 64:
         record(v, e, sid, grp=g)
     return resp
@@ -418,6 +432,17 @@ SELECT variant,
   COUNT(DISTINCT sid) FILTER (WHERE evt = 'ck') AS ck,
   COUNT(DISTINCT sid) FILTER (WHERE evt = 'paid') AS paid
 FROM ab_events WHERE ts >= %(start)s AND variant IN ('tq', 'tp') GROUP BY variant
+"""
+
+
+COPY_SQL = """
+SELECT grp,
+  COUNT(*) FILTER (WHERE evt = 'dm_sent') AS dms,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'landed') AS landed,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'answered') AS answered,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'ck') AS ck,
+  COUNT(DISTINCT sid) FILTER (WHERE evt = 'paid') AS paid
+FROM ab_events WHERE ts >= %(start)s AND variant = 'tq' AND grp LIKE 'c%%' GROUP BY grp
 """
 
 
@@ -560,6 +585,7 @@ def stats():
     frows = {v: (0, 0, 0, 0) for v in FORMATS}
     lrows = {g: (0, 0, 0, 0) for g in LAYOUTS}
     prows = {v: (0, 0, 0, 0, 0) for v in PAGE_TEST}
+    crows = {"c" + m[1:]: (0, 0, 0, 0, 0) for m in QUIZ_COPIES}
     err = ""
     if DATABASE_URL and psycopg:
         try:
@@ -573,6 +599,9 @@ def stats():
                 for g, *nums in conn.execute(LAYOUT_SQL).fetchall():
                     if g in lrows:
                         lrows[g] = tuple(nums)
+                for g, *nums in conn.execute(COPY_SQL, {"start": COPY_TEST_START}).fetchall():
+                    if g in crows:
+                        crows[g] = tuple(nums)
                 for v, *nums in conn.execute(PAGE_SQL, {"start": PAGE_TEST_START}).fetchall():
                     if v in prows:
                         prows[v] = tuple(nums)
@@ -614,8 +643,24 @@ def stats():
             f"<tr><th>{PAGE_TEST[v]}</th><td>{dms}</td><td>{landed}</td><td>{_pct(landed, dms)}</td>"
             f"<td>{quiz_cell}</td><td>{ck}</td><td>{paid}</td><td>{_pct(paid, dms)}</td></tr>"
         )
+    ctrs = ""
+    for m in QUIZ_COPIES:
+        dms, landed, answered, ck, paid = crows["c" + m[1:]]
+        ctrs += (
+            f"<tr><th>{COPY_NAMES[m]}</th><td>{dms}</td><td>{landed}</td><td>{_pct(landed, dms)}</td>"
+            f"<td>{answered}</td><td>{ck}</td><td>{paid}</td><td>{_pct(paid, dms)}</td></tr>"
+        )
+    copy_sec = (
+        "<h2>Teste ativo: texto da DM do quiz (desde " + html.escape(COPY_TEST_START[8:10] + "/" + COPY_TEST_START[5:7]) + ")</h2>"
+        "<div class='wrap'><table><thead><tr><th>Texto</th><th>DMs enviadas</th><th>Entraram</th><th>% que entrou</th>"
+        "<th>Responderam o quiz</th><th>Abriram o checkout</th><th>Compraram</th><th>% compra / DM</th></tr></thead>"
+        "<tbody>" + ctrs + "</tbody></table></div>"
+        "<p class='note'>Só o caminho do quiz. Sorteio 1/3 entre Valor primeiro, Curiosidade e o texto novo (curiosidade + ponto grátis "
+        "prometido dentro do quiz). Dor e Direta saíram. A coluna que decide é \"% compra / DM\".</p>"
+    )
     start_label = html.escape(FORMAT_TEST_START.replace("T", " ")[:16]) + " UTC"
     page = STATS_PAGE.replace("__ERR__", err).replace("__ROWS__", trs).replace("__LAYOUT__", ltrs).replace("__PAGE__", ptrs)
+    page = page.replace("<h2>Teste ativo:", copy_sec + "<h2>Teste ativo:", 1)
     return page.replace("__FORMAT__", ftrs).replace("__START__", start_label), 200
 
 
@@ -685,7 +730,7 @@ def process_instagram_event(data: dict):
             ig_public_reply(comment_id, random.choice(PUBLIC_REPLIES))
             variant = pick_variant()
             if ig_private_reply(comment_id, variant):
-                record(variant, "dm_sent", comment_id, "instagram")
+                record(variant, "dm_sent", comment_id, "instagram", grp=("c" + LAST_COPY["v"][1:]) if variant == "tq" and LAST_COPY["v"] else None)
 
 
 def process_facebook_event(data: dict):
@@ -721,7 +766,7 @@ def process_facebook_event(data: dict):
             fb_public_reply(comment_id, random.choice(PUBLIC_REPLIES))
             variant = pick_variant()
             if fb_private_reply(comment_id, variant):
-                record(variant, "dm_sent", comment_id, "facebook")
+                record(variant, "dm_sent", comment_id, "facebook", grp=("c" + LAST_COPY["v"][1:]) if variant == "tq" and LAST_COPY["v"] else None)
 
 
 def ig_public_reply(comment_id: str, message: str):
