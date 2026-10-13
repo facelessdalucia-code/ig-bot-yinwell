@@ -5,6 +5,7 @@ import json
 import logging
 import os
 import random
+import re
 import threading
 import time
 
@@ -25,11 +26,21 @@ DM = ("Here's your free point 🌿\n\n{ponto}: {onde}. Press 60 seconds, breathi
 LEMBRETE = ("Do it tonight, right before bed: 60 seconds each side 🌙 Most people notice it on day 2 or 3.\n\n"
             "The full guide is here when you want it 👉 {link}")
 
+# T11 (13/10): o Wen mandava 42 DMs e só 5 entravam no site (12%), o mesmo padrão do "valor primeiro" da Yin.
+# cv = valor primeiro (a DM de antes, com o ponto) · cc = curiosidade (o ponto fica no site; foi 35% de entrada na Yin)
+# Comentário que fala de ouvido recebe o ponto do ouvido (os vídeos de ouvido terminam com "Comment EARS").
+DM_CURIO = ("Thank you 🌿\n\nThere's a point for exactly what you're feeling, and most people press it in the wrong spot.\n\n"
+            "See where it is, with photos on a real hand 👉 {link}")
+DM_CURIO_OUVIDO = ("Thank you 🌿\n\nThere are 4 points around the ear for ringing and pressure, and most people press them "
+                   "in the wrong spot.\n\nSee exactly where they are, with photos 👉 {link}")
+OUVIDO = ("Tinggong (SI19)", "the small hollow right in front of your ear opening (open your mouth slightly to find it)")
+RE_OUVIDO = re.compile(r"\b(ears?|tinnitus|ringing|buzz\w*)\b", re.I)
+
 _vistos, _envios, _lock = {}, {}, threading.Lock()
 
 
 def lado(uid: str) -> str:
-    return "rB" if int(hashlib.md5(uid.encode()).hexdigest(), 16) % 2 else "rA"
+    return "cc" if int(hashlib.md5(uid.encode()).hexdigest(), 16) % 2 else "cv"
 
 
 def contar(perfil: str, v: str, e: str):
@@ -84,7 +95,12 @@ def comentario(conta: str, cfg: dict, v: dict):
         return
     var = lado(de.get("id") or cid)
     post(cfg, f"{cid}/replies", data={"message": random.choice(PUBLICAS)})
-    msg = DM.format(ponto=cfg["ponto"], onde=cfg["onde"], produto=cfg["produto"], link=link_com(cfg, var))
+    ouvido = bool(RE_OUVIDO.search(texto))
+    if var == "cc":
+        msg = (DM_CURIO_OUVIDO if ouvido else DM_CURIO).format(link=link_com(cfg, var))
+    else:
+        ponto, onde = OUVIDO if ouvido else (cfg["ponto"], cfg["onde"])
+        msg = DM.format(ponto=ponto, onde=onde, produto=cfg["produto"], link=link_com(cfg, var))
     if post(cfg, "me/messages", json={"recipient": {"comment_id": cid}, "message": {"text": msg}}):
         contar(cfg["perfil"], var, "dm_sent")
         log.info("%s: DM enviada (%s, %s)", cfg["perfil"], de.get("username"), var)
@@ -96,7 +112,7 @@ def mensagem(conta: str, cfg: dict, ev: dict):
         return
     var = lado(rem)
     contar(cfg["perfil"], var, "dm_reply")
-    if var == "rB" and uma_vez("r" + rem, ttl=7 * 86400):
+    if var == "cv" and uma_vez("r" + rem, ttl=7 * 86400):  # lembrete só faz sentido pra quem já recebeu o ponto
         if post(cfg, "me/messages", json={"recipient": {"id": rem}, "message": {"text": LEMBRETE.format(link=link_com(cfg, var))}}):
             contar(cfg["perfil"], var, "reminder")
 
