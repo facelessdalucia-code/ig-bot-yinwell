@@ -20,7 +20,9 @@ FUNIL = os.environ.get("FUNIL_API", "https://yinwell-checkout.yinwell.workers.de
 MAX_HORA = int(os.environ.get("MAX_REPLIES_PER_HOUR", "40"))
 G = "https://graph.instagram.com/v21.0"
 
-PUBLICAS = ["Sent ✅ check your DMs", "Just sent it 🌿", "Sent! Try it tonight ✨", "Check your DMs 💌"]
+# 20/10: a DM cai em "solicitações de mensagem"; a resposta pública ensina onde olhar
+PUBLICAS = ["Sent ✅ check your message requests", "Just sent it 🌿 look in your message requests",
+           "Sent! ✨ If it's not in your inbox, check message requests", "In your DMs 💌 check message requests"]
 DM = ("Here's your free point 🌿\n\n{ponto}: {onde}. Press 60 seconds, breathing slowly.\n\n"
       "{produto} is here 👉 {link}\n\nDid you find the point? Reply YES and I'll tell you the best time to do it.")
 LEMBRETE = ("Do it tonight, right before bed: 60 seconds each side 🌙 Most people notice it on day 2 or 3.\n\n"
@@ -108,6 +110,10 @@ def comentario(conta: str, cfg: dict, v: dict):
 
 def mensagem(conta: str, cfg: dict, ev: dict):
     m, rem = ev.get("message") or {}, (ev.get("sender") or {}).get("id")
+    if ev.get("read") and rem and rem != conta:  # 20/10: DM aberta (webhook messaging_seen)
+        if uma_vez("seen" + rem, ttl=7 * 86400):
+            contar(cfg["perfil"], lado(rem), "dm_seen")
+        return
     if not rem or rem == conta or m.get("is_echo") or not m.get("text"):
         return
     var = lado(rem)
