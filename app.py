@@ -180,11 +180,12 @@ FALLBACK_TEXT = (
     "Tap the button below and I'll send you the link to your free test."
 )
 
+# 20/10: 79% das DMs nunca viram clique; a DM cai em "solicitações de mensagem" e muita gente não acha. A resposta pública ensina onde olhar.
 PUBLIC_REPLIES = [
-    "Just sent it to your DMs! 📩",
-    "Check your inbox, I sent it over! 💛",
-    "It's in your messages now, take a look! ✨",
-    "Sent! Have a look at your DMs 🌿",
+    "Sent you the point in DM 💌 check your message requests!",
+    "Just sent it! 📩 If you don't see it, check your message requests 💛",
+    "It's in your DMs ✨ look in message requests if it's not in your inbox",
+    "Sent! 🌿 Check your message requests, it's waiting there for you",
 ]
 
 _processed = {}
@@ -730,6 +731,7 @@ def process_instagram_event(data: dict):
             ig_public_reply(comment_id, random.choice(PUBLIC_REPLIES))
             variant = pick_variant()
             if ig_private_reply(comment_id, variant):
+                perfis.contar("yinwell", "dm", "dm_sent")  # painel do Cloudflare (o banco do Render expira 24/10)
                 record(variant, "dm_sent", comment_id, "instagram", grp=("c" + LAST_COPY["v"][1:]) if variant == "tq" and LAST_COPY["v"] else None)
 
 
@@ -854,6 +856,11 @@ def handle_messaging_event(entry: dict, event: dict):
     postback = event.get("postback") or {}
 
     if message.get("is_echo") or sender_id in {IG_USER_ID, entry.get("id")}:
+        return
+    if event.get("read"):  # 20/10: a pessoa abriu a DM (webhook messaging_seen) — separa "não abriu" de "abriu e não clicou"
+        import perfis
+        if perfis.uma_vez(f"seen:{sender_id}", 7 * 86400):
+            perfis.contar("yinwell", "dm", "dm_seen")
         return
 
     payload = (message.get("quick_reply") or {}).get("payload") or postback.get("payload")
