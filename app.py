@@ -111,7 +111,7 @@ FORMAT_TEST_START = os.environ.get("FORMAT_TEST_START", "2100-01-01T00:00:00Z")
 FORMAT_TEST_END = "2026-10-04T13:41:00Z"
 
 
-PAGE_URL = os.environ.get("PAGE_URL", "https://yinwell-method.pages.dev/")
+PAGE_URL = os.environ.get("PAGE_URL", "https://yinwell-tt1.pages.dev/")
 QUIZ_URL = os.environ.get("QUIZ_URL", "https://yinwell-method.pages.dev/quiz/")  # quiz com checkout embutido (05/10)
 PAGE_TEST = {"tq": "DM → quiz → página", "tp": "DM → página direta"}
 PAGE_TEST_START = os.environ.get("PAGE_TEST_START", "2026-10-05T01:00:00Z")

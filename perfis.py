@@ -95,6 +95,12 @@ def comentario(conta: str, cfg: dict, v: dict):
         return
     if not uma_vez("c" + cid) or not dentro_do_limite(conta):
         return
+    if cfg.get("dm"):  # perfil com copy própria (ex.: ritualsoninho, PT-BR): sem teste T11 nem ponto
+        post(cfg, f"{cid}/replies", data={"message": random.choice(cfg.get("publicas") or PUBLICAS)})
+        if post(cfg, "me/messages", json={"recipient": {"comment_id": cid}, "message": {"text": cfg["dm"].format(link=link_com(cfg, "pt"))}}):
+            contar(cfg["perfil"], "pt", "dm_sent")
+            log.info("%s: DM enviada (%s)", cfg["perfil"], de.get("username"))
+        return
     var = lado(de.get("id") or cid)
     post(cfg, f"{cid}/replies", data={"message": random.choice(PUBLICAS)})
     ouvido = bool(RE_OUVIDO.search(texto))
@@ -116,7 +122,7 @@ def mensagem(conta: str, cfg: dict, ev: dict):
         return
     if not rem or rem == conta or m.get("is_echo") or not m.get("text"):
         return
-    var = lado(rem)
+    var = "pt" if cfg.get("dm") else lado(rem)
     contar(cfg["perfil"], var, "dm_reply")
     if var == "cv" and uma_vez("r" + rem, ttl=7 * 86400):  # lembrete só faz sentido pra quem já recebeu o ponto
         if post(cfg, "me/messages", json={"recipient": {"id": rem}, "message": {"text": LEMBRETE.format(link=link_com(cfg, var))}}):
